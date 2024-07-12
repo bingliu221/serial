@@ -32,8 +32,15 @@ func (c *ModbusClient) Release() error {
 	return c.handler.Close()
 }
 
-func (c *ModbusClient) request(slaveId byte, code byte, data []byte) ([]byte, error) {
-	ctx := context.Background()
+func (c *ModbusClient) RawRequestContext(ctx context.Context, slaveId byte, code byte, data []byte) ([]byte, error) {
+	return c.request(ctx, slaveId, code, data)
+}
+
+func (c *ModbusClient) RawRequest(slaveId byte, code byte, data []byte) ([]byte, error) {
+	return c.request(context.Background(), slaveId, code, data)
+}
+
+func (c *ModbusClient) request(ctx context.Context, slaveId byte, code byte, data []byte) ([]byte, error) {
 	return c.handler.Send(ctx, &message{slaveId, code, data})
 }
 
@@ -55,7 +62,7 @@ func (c *ModbusClient) ReadDiscreteInputs(slaveId byte, ddress uint16, count uin
 
 func (c *ModbusClient) ReadHoldingRegisters(slaveId byte, address uint16, count uint16) ([]uint16, error) {
 	data := bytesJoin(u16be(address), u16be(count))
-	data, err := c.request(slaveId, FnReadHoldingRegisters, data)
+	data, err := c.request(context.Background(), slaveId, FnReadHoldingRegisters, data)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +71,7 @@ func (c *ModbusClient) ReadHoldingRegisters(slaveId byte, address uint16, count 
 
 func (c *ModbusClient) ReadInputRegisters(slaveId byte, address uint16, count uint16) ([]uint16, error) {
 	data := bytesJoin(u16be(address), u16be(count))
-	data, err := c.request(slaveId, FnReadInputRegisters, data)
+	data, err := c.request(context.Background(), slaveId, FnReadInputRegisters, data)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +80,7 @@ func (c *ModbusClient) ReadInputRegisters(slaveId byte, address uint16, count ui
 
 func (c *ModbusClient) ReadWriteRegisters(slaveId byte, readAddress uint16, readCount uint16, writeAddress uint16, writeValues []uint16) ([]uint16, error) {
 	data := bytesJoin(u16be(readAddress), u16be(readCount), u16be(writeAddress), u16be(uint16(len(writeValues))), u16listbe(writeValues))
-	data, err := c.request(slaveId, FnReadWriteRegisters, data)
+	data, err := c.request(context.Background(), slaveId, FnReadWriteRegisters, data)
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +89,12 @@ func (c *ModbusClient) ReadWriteRegisters(slaveId byte, readAddress uint16, read
 
 func (c *ModbusClient) WriteRegister(slaveId byte, address uint16, value uint16) error {
 	data := bytesJoin(u16be(address), u16be(value))
-	_, err := c.request(slaveId, FnWriteRegister, data)
+	_, err := c.request(context.Background(), slaveId, FnWriteRegister, data)
 	return err
 }
 
 func (c *ModbusClient) WriteRegisters(slaveId byte, address uint16, values []uint16) error {
 	data := bytesJoin(u16be(address), u16be(uint16(len(values))), u16listbe(values))
-	_, err := c.request(slaveId, FnWriteRegisters, data)
+	_, err := c.request(context.Background(), slaveId, FnWriteRegisters, data)
 	return err
 }
