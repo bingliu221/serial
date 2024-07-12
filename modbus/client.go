@@ -37,19 +37,19 @@ func (c *ModbusClient) request(slaveId byte, code byte, data []byte) ([]byte, er
 	return c.handler.Send(ctx, &message{slaveId, code, data})
 }
 
-func (c *ModbusClient) ReadCoils(address uint16, count uint16) ([]bool, error) {
+func (c *ModbusClient) ReadCoils(slaveId byte, address uint16, count uint16) ([]bool, error) {
 	return nil, ErrNotImplemented
 }
 
-func (c *ModbusClient) WriteCoil(address uint16, value bool) error {
+func (c *ModbusClient) WriteCoil(slaveId byte, address uint16, value bool) error {
 	return ErrNotImplemented
 }
 
-func (c *ModbusClient) WriteCoils(address uint16, values []bool) error {
+func (c *ModbusClient) WriteCoils(slaveId byte, address uint16, values []bool) error {
 	return ErrNotImplemented
 }
 
-func (c *ModbusClient) ReadDiscreteInputs(address uint16, count uint16) ([]bool, error) {
+func (c *ModbusClient) ReadDiscreteInputs(slaveId byte, ddress uint16, count uint16) ([]bool, error) {
 	return nil, ErrNotImplemented
 }
 
