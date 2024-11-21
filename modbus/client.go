@@ -32,69 +32,65 @@ func (c *ModbusClient) Release() error {
 	return c.handler.Close()
 }
 
-func (c *ModbusClient) RawRequestContext(ctx context.Context, slaveId byte, code byte, data []byte) ([]byte, error) {
+func (c *ModbusClient) RawRequest(ctx context.Context, slaveId byte, code byte, data []byte) ([]byte, error) {
 	return c.request(ctx, slaveId, code, data)
-}
-
-func (c *ModbusClient) RawRequest(slaveId byte, code byte, data []byte) ([]byte, error) {
-	return c.request(context.Background(), slaveId, code, data)
 }
 
 func (c *ModbusClient) request(ctx context.Context, slaveId byte, code byte, data []byte) ([]byte, error) {
 	return c.handler.Send(ctx, &message{slaveId, code, data})
 }
 
-func (c *ModbusClient) ReadCoils(slaveId byte, address uint16, count uint16) ([]bool, error) {
+func (c *ModbusClient) ReadCoils(ctx context.Context, slaveId byte, address uint16, count uint16) ([]bool, error) {
 	return nil, ErrNotImplemented
 }
 
-func (c *ModbusClient) WriteCoil(slaveId byte, address uint16, value bool) error {
+func (c *ModbusClient) WriteCoil(ctx context.Context, slaveId byte, address uint16, value bool) error {
 	return ErrNotImplemented
 }
 
-func (c *ModbusClient) WriteCoils(slaveId byte, address uint16, values []bool) error {
+func (c *ModbusClient) WriteCoils(ctx context.Context, slaveId byte, address uint16, values []bool) error {
 	return ErrNotImplemented
 }
 
-func (c *ModbusClient) ReadDiscreteInputs(slaveId byte, ddress uint16, count uint16) ([]bool, error) {
+func (c *ModbusClient) ReadDiscreteInputs(ctx context.Context, slaveId byte, ddress uint16, count uint16) ([]bool, error) {
 	return nil, ErrNotImplemented
 }
 
-func (c *ModbusClient) ReadHoldingRegisters(slaveId byte, address uint16, count uint16) ([]uint16, error) {
+func (c *ModbusClient) ReadHoldingRegisters(ctx context.Context, slaveId byte, address uint16, count uint16) ([]uint16, error) {
 	data := bytesJoin(u16be(address), u16be(count))
-	data, err := c.request(context.Background(), slaveId, FnReadHoldingRegisters, data)
+	data, err := c.request(ctx, slaveId, FnReadHoldingRegisters, data)
 	if err != nil {
 		return nil, err
 	}
 	return beu16list(data), nil
 }
 
-func (c *ModbusClient) ReadInputRegisters(slaveId byte, address uint16, count uint16) ([]uint16, error) {
+func (c *ModbusClient) ReadInputRegisters(ctx context.Context, slaveId byte, address uint16, count uint16) ([]uint16, error) {
 	data := bytesJoin(u16be(address), u16be(count))
-	data, err := c.request(context.Background(), slaveId, FnReadInputRegisters, data)
+	data, err := c.request(ctx, slaveId, FnReadInputRegisters, data)
 	if err != nil {
 		return nil, err
 	}
 	return beu16list(data), nil
 }
 
-func (c *ModbusClient) ReadWriteRegisters(slaveId byte, readAddress uint16, readCount uint16, writeAddress uint16, writeValues []uint16) ([]uint16, error) {
+func (c *ModbusClient) ReadWriteRegisters(ctx context.Context, slaveId byte, readAddress uint16, readCount uint16, writeAddress uint16, writeValues []uint16) ([]uint16, error) {
 	data := bytesJoin(u16be(readAddress), u16be(readCount), u16be(writeAddress), u16be(uint16(len(writeValues))), u16listbe(writeValues))
-	data, err := c.request(context.Background(), slaveId, FnReadWriteRegisters, data)
+	data, err := c.request(ctx, slaveId, FnReadWriteRegisters, data)
 	if err != nil {
 		return nil, err
 	}
 	return beu16list(data), nil
 }
 
-func (c *ModbusClient) WriteRegister(slaveId byte, address uint16, value uint16) error {
+func (c *ModbusClient) WriteRegister(ctx context.Context, slaveId byte, address uint16, value uint16) error {
 	data := bytesJoin(u16be(address), u16be(value))
-	_, err := c.request(context.Background(), slaveId, FnWriteRegister, data)
+	_, err := c.request(ctx, slaveId, FnWriteRegister, data)
 	return err
 }
 
-func (c *ModbusClient) WriteRegisters(slaveId byte, address uint16, values []uint16) error {
+func (c *ModbusClient) WriteRegisters(ctx context.Context, slaveId byte, address uint16, values []uint16) error {
 	data := bytesJoin(u16be(address), u16be(uint16(len(values))), u16listbe(values))
-	_, err := c.request(context.Background(), slaveId, FnWriteRegisters, data)
+	_, err := c.request(ctx, slaveId, FnWriteRegisters, data)
 	return err
 }

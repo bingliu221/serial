@@ -14,7 +14,7 @@ func setTermio(fd uintptr, c *config) error {
 		Ispeed: uint64(c.FlagBaudrate),
 		Ospeed: uint64(c.FlagBaudrate),
 	}
-	vmin, vtime := timeoutValues(c.ReadTimeout)
+	vmin, vtime := timeoutValues(c.Timeout)
 	t.Cc[syscall.VMIN] = vmin
 	t.Cc[syscall.VTIME] = vtime
 

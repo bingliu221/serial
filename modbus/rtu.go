@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"log"
 	"sync"
 	"time"
 
@@ -99,10 +98,9 @@ func (h *ModbusRtuClientHandler) readContinuously(cancel context.CancelFunc) {
 	for {
 		resp, err := h.readResp()
 		if err != nil {
-			if errors.Is(err, fs.ErrClosed) {
+			if errors.Is(err, fs.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				break
 			}
-			log.Print(err)
 			continue
 		}
 
@@ -140,7 +138,6 @@ func (h *ModbusRtuClientHandler) valify(adu []byte) error {
 
 	sum := crc(adu[:crcIdx])
 	if !bytes.Equal(sum, adu[crcIdx:]) {
-		log.Print(sum, adu[crcIdx:])
 		return errors.New("crc not matched")
 	}
 
