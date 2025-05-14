@@ -41,19 +41,41 @@ func (c *ModbusClient) request(ctx context.Context, slaveId byte, code byte, dat
 }
 
 func (c *ModbusClient) ReadCoils(ctx context.Context, slaveId byte, address uint16, count uint16) ([]bool, error) {
-	return nil, ErrNotImplemented
+	data := bytesJoin(u16be(address), u16be(count))
+	data, err := c.request(ctx, slaveId, FnReadCoils, data)
+	if err != nil {
+		return nil, err
+	}
+	values := beboollist(data)
+	if len(values) < int(count) {
+		return nil, fmt.Errorf("expected %d values, got %d", count, len(values))
+	}
+	return beboollist(data)[:count], nil
 }
 
 func (c *ModbusClient) WriteCoil(ctx context.Context, slaveId byte, address uint16, value bool) error {
-	return ErrNotImplemented
+	data := bytesJoin(u16be(address), boolbe(value))
+	_, err := c.request(ctx, slaveId, FnWriteCoil, data)
+	return err
 }
 
 func (c *ModbusClient) WriteCoils(ctx context.Context, slaveId byte, address uint16, values []bool) error {
-	return ErrNotImplemented
+	data := bytesJoin(u16be(address), u16be(uint16(len(values))), boollistbe(values))
+	_, err := c.request(ctx, slaveId, FnWriteCoils, data)
+	return err
 }
 
-func (c *ModbusClient) ReadDiscreteInputs(ctx context.Context, slaveId byte, ddress uint16, count uint16) ([]bool, error) {
-	return nil, ErrNotImplemented
+func (c *ModbusClient) ReadDiscreteInputs(ctx context.Context, slaveId byte, address uint16, count uint16) ([]bool, error) {
+	data := bytesJoin(u16be(address), u16be(count))
+	data, err := c.request(ctx, slaveId, FnReadDiscreteInputs, data)
+	if err != nil {
+		return nil, err
+	}
+	values := beboollist(data)
+	if len(values) < int(count) {
+		return nil, fmt.Errorf("expected %d values, got %d", count, len(values))
+	}
+	return values[len(values)-int(count):], nil
 }
 
 func (c *ModbusClient) ReadHoldingRegisters(ctx context.Context, slaveId byte, address uint16, count uint16) ([]uint16, error) {
