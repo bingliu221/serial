@@ -26,12 +26,8 @@ var parityOptions = map[Parity]uint32{
 	ParityEven: syscall.PARENB,
 }
 
-func timeoutValues(timeout time.Duration) (uint8, uint8) {
-	if timeout <= 0 {
-		return 1, 0
-	}
-	deciSecond := min(max(timeout.Milliseconds()/100, 1), 255)
-	return 0, uint8(deciSecond)
+func deciSecondInUint8(duration time.Duration) uint8 {
+	return uint8(min(max(duration.Milliseconds()/100, 1), 255))
 }
 
 func open(filename string, c *config) (Port, error) {

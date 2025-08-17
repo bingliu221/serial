@@ -35,9 +35,8 @@ func setTermio(fd uintptr, c *config) error {
 		Ispeed: uint64(c.FlagBaudrate),
 		Ospeed: uint64(c.FlagBaudrate),
 	}
-	vmin, vtime := timeoutValues(c.Timeout)
-	t.Cc[syscall.VMIN] = vmin
-	t.Cc[syscall.VTIME] = vtime
+	t.Cc[syscall.VMIN] = 1
+	t.Cc[syscall.VTIME] = deciSecondInUint8(c.Timeout)
 
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&t)))
 	if errno != 0 {
