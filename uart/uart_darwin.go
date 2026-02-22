@@ -7,25 +7,39 @@ import (
 	"unsafe"
 )
 
+const IOSSIOSPEED = 0x80085402
+
 var baudrateOptions = map[int]uint32{
-	50:     syscall.B50,
-	75:     syscall.B75,
-	110:    syscall.B110,
-	134:    syscall.B134,
-	150:    syscall.B150,
-	200:    syscall.B200,
-	300:    syscall.B300,
-	600:    syscall.B600,
-	1200:   syscall.B1200,
-	1800:   syscall.B1800,
-	2400:   syscall.B2400,
-	4800:   syscall.B4800,
-	9600:   syscall.B9600,
-	19200:  syscall.B19200,
-	38400:  syscall.B38400,
-	57600:  syscall.B57600,
-	115200: syscall.B115200,
-	230400: syscall.B230400,
+	50:      syscall.B50,
+	75:      syscall.B75,
+	110:     syscall.B110,
+	134:     syscall.B134,
+	150:     syscall.B150,
+	200:     syscall.B200,
+	300:     syscall.B300,
+	600:     syscall.B600,
+	1200:    syscall.B1200,
+	1800:    syscall.B1800,
+	2400:    syscall.B2400,
+	4800:    syscall.B4800,
+	9600:    syscall.B9600,
+	19200:   syscall.B19200,
+	38400:   syscall.B38400,
+	57600:   syscall.B57600,
+	115200:  syscall.B115200,
+	230400:  syscall.B230400,
+	460800:  460800,
+	500000:  500000,
+	576000:  576000,
+	921600:  921600,
+	1000000: 1000000,
+	1152000: 1152000,
+	1500000: 1500000,
+	2000000: 2000000,
+	2500000: 2500000,
+	3000000: 3000000,
+	3500000: 3500000,
+	4000000: 4000000,
 }
 
 func setTermio(fd uintptr, c *config) error {
@@ -41,6 +55,13 @@ func setTermio(fd uintptr, c *config) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&t)))
 	if errno != 0 {
 		return errno
+	}
+
+	if c.FlagBaudrate > syscall.B230400 {
+		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(IOSSIOSPEED), uintptr(unsafe.Pointer(&c.FlagBaudrate)))
+		if errno != 0 {
+			return errno
+		}
 	}
 
 	return nil
