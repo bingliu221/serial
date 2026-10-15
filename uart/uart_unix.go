@@ -36,16 +36,27 @@ func open(filename string, c *config) (Port, error) {
 		return nil, err
 	}
 
-	err = setTermio(f.Fd(), c)
+	rawConn, err := f.SyscallConn()
 	if err != nil {
 		f.Close()
 		return nil, err
 	}
 
-	err = drain(f.Fd())
+	var sysErr error
+	err = rawConn.Control(func(fd uintptr) {
+		sysErr = setTermio(fd, c)
+		if sysErr != nil {
+			return
+		}
+		sysErr = drain(fd)
+	})
 	if err != nil {
 		f.Close()
 		return nil, err
+	}
+	if sysErr != nil {
+		f.Close()
+		return nil, sysErr
 	}
 
 	return f, nil
