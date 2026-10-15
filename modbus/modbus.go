@@ -36,6 +36,9 @@ const (
 
 var (
 	ErrNotImplemented = errors.New("not implemented")
+	// ErrUnsupportedFunction is returned when a response carries a function
+	// code whose frame length cannot be determined.
+	ErrUnsupportedFunction = errors.New("unsupported function code")
 )
 
 type ExceptionError byte
@@ -83,13 +86,24 @@ type ModbusClient struct {
 }
 
 type options struct {
-	broadcastDelay time.Duration
+	broadcastDelay  time.Duration
+	responseTimeout time.Duration
 }
 
 type Option func(*options)
 
+// WithBroadcastDelay sets the turnaround delay after a broadcast request.
+// Default 100ms.
 func WithBroadcastDelay(d time.Duration) Option {
 	return func(o *options) {
 		o.broadcastDelay = d
+	}
+}
+
+// WithResponseTimeout sets the response timeout applied when the request
+// context has no deadline. Default 1s; 0 waits indefinitely.
+func WithResponseTimeout(d time.Duration) Option {
+	return func(o *options) {
+		o.responseTimeout = d
 	}
 }

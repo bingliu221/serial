@@ -32,6 +32,9 @@ func (c *ModbusClient) Release() error {
 	return c.handler.Close()
 }
 
+// RawRequest sends an arbitrary PDU. Only function codes whose response
+// length is known (the Fn* constants) are supported; others return
+// ErrUnsupportedFunction.
 func (c *ModbusClient) RawRequest(ctx context.Context, slaveId byte, code byte, data []byte) ([]byte, error) {
 	return c.request(ctx, slaveId, code, data)
 }

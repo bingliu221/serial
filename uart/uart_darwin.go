@@ -9,6 +9,8 @@ import (
 
 const IOSSIOSPEED = 0x80085402
 
+const fread = 0x1 // FREAD from <sys/fcntl.h>
+
 var baudrateOptions = map[int]uint32{
 	50:      syscall.B50,
 	75:      syscall.B75,
@@ -43,35 +45,33 @@ var baudrateOptions = map[int]uint32{
 }
 
 func setTermio(fd uintptr, c *config) error {
+	// On darwin the B* constants are the literal baud values and overlap with
+	// Cflag bits, so the speed must only go into Ispeed/Ospeed.
 	t := syscall.Termios{
 		Iflag:  syscall.IGNPAR,
-		Cflag:  syscall.CREAD | syscall.CLOCAL | uint64(c.FlagDataBits|c.FlagBaudrate|c.FlagStopBits|c.FlagParity),
+		Cflag:  syscall.CREAD | syscall.CLOCAL | uint64(c.FlagDataBits|c.FlagStopBits|c.FlagParity),
 		Ispeed: uint64(c.FlagBaudrate),
 		Ospeed: uint64(c.FlagBaudrate),
 	}
-	t.Cc[syscall.VMIN] = 1
-	t.Cc[syscall.VTIME] = deciSecondInUint8(c.Timeout)
-
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&t)))
-	if errno != 0 {
-		return errno
+	if err := ioctlPtr(fd, syscall.TIOCSETA, unsafe.Pointer(&t)); err != nil {
+		return err
 	}
 
 	if c.FlagBaudrate > syscall.B230400 {
-		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(IOSSIOSPEED), uintptr(unsafe.Pointer(&c.FlagBaudrate)))
-		if errno != 0 {
-			return errno
+		speed := uint64(c.FlagBaudrate) // speed_t is 8 bytes
+		if err := ioctlPtr(fd, IOSSIOSPEED, unsafe.Pointer(&speed)); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func drain(fd uintptr) error {
-	var flushValue int = 0
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCFLUSH), uintptr(unsafe.Pointer(&flushValue)))
-	if errno != 0 {
-		return errno
-	}
-	return nil
+func flushInput(fd uintptr) error {
+	which := int32(fread)
+	return ioctlPtr(fd, syscall.TIOCFLUSH, unsafe.Pointer(&which))
+}
+
+func drainOutput(fd uintptr) error {
+	return ioctl(fd, syscall.TIOCDRAIN, 0)
 }

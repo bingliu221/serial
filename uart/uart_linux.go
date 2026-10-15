@@ -35,29 +35,19 @@ var baudrateOptions = map[int]uint32{
 }
 
 func setTermio(fd uintptr, c *config) error {
+	// The speed is carried by the CBAUD bits of Cflag.
 	t := syscall.Termios{
-		Iflag:  syscall.IGNPAR,
-		Cflag:  syscall.CREAD | syscall.CLOCAL | c.FlagDataBits | c.FlagBaudrate | c.FlagStopBits | c.FlagParity,
-		Ispeed: c.FlagBaudrate,
-		Ospeed: c.FlagBaudrate,
+		Iflag: syscall.IGNPAR,
+		Cflag: syscall.CREAD | syscall.CLOCAL | c.FlagDataBits | c.FlagBaudrate | c.FlagStopBits | c.FlagParity,
 	}
-	t.Cc[syscall.VMIN] = 1
-	t.Cc[syscall.VTIME] = deciSecondInUint8(c.Timeout)
-
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&t)))
-	if errno != 0 {
-		return errno
-	}
-
-	return nil
+	return ioctlPtr(fd, syscall.TCSETS, unsafe.Pointer(&t))
 }
 
-func drain(fd uintptr) error {
-	TCFLSH := 0x540b
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(TCFLSH), uintptr(syscall.TCIOFLUSH))
-	if errno != 0 {
-		return errno
-	}
+func flushInput(fd uintptr) error {
+	return ioctl(fd, ioctlTCFLSH, syscall.TCIFLUSH)
+}
 
-	return nil
+func drainOutput(fd uintptr) error {
+	// TCSBRK with a non-zero argument is tcdrain(3).
+	return ioctl(fd, ioctlTCSBRK, 1)
 }

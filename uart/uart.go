@@ -10,6 +10,9 @@ type Port interface {
 	io.Reader
 	io.Writer
 	io.Closer
+	// FlushInput discards data received but not yet read.
+	FlushInput() error
+	// Drain blocks until all written data has been transmitted.
 	Drain() error
 	SetReadDeadline(t time.Time) error
 }

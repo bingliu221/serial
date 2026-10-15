@@ -1,8 +1,10 @@
 package modbus
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -11,14 +13,19 @@ import (
 )
 
 type ModbusRtuClientHandler struct {
-	port           uart.Port
-	broadcastDelay time.Duration
-	sendMutex      sync.Mutex
+	port            uart.Port
+	broadcastDelay  time.Duration
+	responseTimeout time.Duration
+	frameGap        time.Duration
+
+	sendMutex sync.Mutex
+	lastIO    time.Time
 }
 
 func NewModbusRtuClientHandler(path string, cfg uart.Config, opts ...Option) (*ModbusRtuClientHandler, error) {
 	o := options{
-		broadcastDelay: 100 * time.Millisecond,
+		broadcastDelay:  100 * time.Millisecond,
+		responseTimeout: time.Second,
 	}
 	for _, opt := range opts {
 		opt(&o)
@@ -30,9 +37,21 @@ func NewModbusRtuClientHandler(path string, cfg uart.Config, opts ...Option) (*M
 	}
 
 	return &ModbusRtuClientHandler{
-		port:           port,
-		broadcastDelay: o.broadcastDelay,
+		port:            port,
+		broadcastDelay:  o.broadcastDelay,
+		responseTimeout: o.responseTimeout,
+		frameGap:        frameGap(cfg.Baudrate),
 	}, nil
+}
+
+// frameGap returns the t3.5 inter-frame silence. Above 19200 baud the spec
+// fixes it at 1.75ms.
+func frameGap(baudrate int) time.Duration {
+	if baudrate > 19200 {
+		return 1750 * time.Microsecond
+	}
+	// 11 bits per character, 3.5 characters.
+	return time.Duration(38_500_000/baudrate) * time.Microsecond
 }
 
 func (h *ModbusRtuClientHandler) Close() error {
@@ -55,6 +74,8 @@ func (h *ModbusRtuClientHandler) readFrame() (*message, error) {
 			remain += 3
 		case FnMaskWriteRegister:
 			remain += 5
+		default:
+			return nil, fmt.Errorf("%w: %#02x", ErrUnsupportedFunction, code)
 		}
 	}
 
@@ -80,11 +101,18 @@ func (h *ModbusRtuClientHandler) readWithContext(ctx context.Context) (*message,
 	if err := h.port.SetReadDeadline(deadline); err != nil {
 		return nil, err
 	}
+
+	fired := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
+		defer close(fired)
 		_ = h.port.SetReadDeadline(time.Now())
 	})
 	defer func() {
-		stop()
+		// If the callback already started, wait for it so it cannot touch
+		// the deadline of a later request.
+		if !stop() {
+			<-fired
+		}
 		_ = h.port.SetReadDeadline(time.Time{})
 	}()
 
@@ -145,9 +173,55 @@ func parseResponse(req, resp *message) ([]byte, error) {
 			return nil, errors.New("invalid response data")
 		}
 		return resp.data[1:], nil
+	case FnWriteCoil, FnWriteRegister, FnWriteCoils, FnWriteRegisters:
+		// Echo of address + value/quantity.
+		if len(req.data) < 4 || !bytes.Equal(resp.data, req.data[:4]) {
+			return nil, errors.New("write response echo mismatch")
+		}
+		return nil, nil
+	case FnMaskWriteRegister:
+		if !bytes.Equal(resp.data, req.data) {
+			return nil, errors.New("write response echo mismatch")
+		}
+		return nil, nil
 	default:
 		return nil, nil
 	}
+}
+
+// waitFrameGap keeps at least t3.5 of bus silence since the last frame.
+func (h *ModbusRtuClientHandler) waitFrameGap(ctx context.Context) error {
+	wait := time.Until(h.lastIO.Add(h.frameGap))
+	if wait <= 0 {
+		return nil
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func (h *ModbusRtuClientHandler) write(ctx context.Context, adu []byte) error {
+	if err := h.waitFrameGap(ctx); err != nil {
+		return err
+	}
+	if err := h.port.FlushInput(); err != nil {
+		return err
+	}
+	if _, err := h.port.Write(adu); err != nil {
+		return err
+	}
+	// Wait until the frame is physically on the wire so timing that follows
+	// (turnaround delay, response timeout) starts from the right moment.
+	if err := h.port.Drain(); err != nil {
+		return err
+	}
+	h.lastIO = time.Now()
+	return nil
 }
 
 func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte, error) {
@@ -163,26 +237,31 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 		return nil, err
 	}
 
-	if err = h.port.Drain(); err != nil {
-		return nil, err
-	}
-
-	if _, err = h.port.Write(adu); err != nil {
+	if err = h.write(ctx, adu); err != nil {
 		return nil, err
 	}
 
 	if req.slaveId == 0 {
 		if h.broadcastDelay > 0 {
+			t := time.NewTimer(h.broadcastDelay)
+			defer t.Stop()
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(h.broadcastDelay):
+			case <-t.C:
 			}
 		}
 		return nil, nil
 	}
 
+	if _, ok := ctx.Deadline(); !ok && h.responseTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.responseTimeout)
+		defer cancel()
+	}
+
 	resp, err := h.readWithContext(ctx)
+	h.lastIO = time.Now()
 	if err != nil {
 		return nil, err
 	}

@@ -4,8 +4,10 @@ package uart
 
 import (
 	"os"
+	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 var databitsOptions = map[int]uint32{
@@ -26,24 +28,73 @@ var parityOptions = map[Parity]uint32{
 	ParityEven: syscall.PARENB,
 }
 
-func deciSecondInUint8(duration time.Duration) uint8 {
-	return uint8(min(max(duration.Milliseconds()/100, 1), 255))
+type port struct {
+	file    *os.File
+	rawConn syscall.RawConn
+	timeout time.Duration
+
+	deadlineMu  sync.Mutex
+	hasDeadline bool
 }
 
-type port struct {
-	*os.File
-	rawConn syscall.RawConn
+func (p *port) Write(b []byte) (int, error) {
+	return p.file.Write(b)
+}
+
+func (p *port) Close() error {
+	return p.file.Close()
+}
+
+func (p *port) SetReadDeadline(t time.Time) error {
+	p.deadlineMu.Lock()
+	defer p.deadlineMu.Unlock()
+	p.hasDeadline = !t.IsZero()
+	return p.file.SetReadDeadline(t)
+}
+
+func (p *port) Read(b []byte) (int, error) {
+	if p.timeout > 0 {
+		p.deadlineMu.Lock()
+		var err error
+		if !p.hasDeadline {
+			err = p.file.SetReadDeadline(time.Now().Add(p.timeout))
+		}
+		p.deadlineMu.Unlock()
+		if err != nil {
+			return 0, err
+		}
+	}
+	return p.file.Read(b)
+}
+
+func (p *port) FlushInput() error {
+	return p.control(flushInput)
 }
 
 func (p *port) Drain() error {
+	return p.control(drainOutput)
+}
+
+func (p *port) control(fn func(fd uintptr) error) error {
 	var sysErr error
-	err := p.rawConn.Control(func(fd uintptr) {
-		sysErr = drain(fd)
-	})
-	if err != nil {
+	if err := p.rawConn.Control(func(fd uintptr) { sysErr = fn(fd) }); err != nil {
 		return err
 	}
 	return sysErr
+}
+
+func ioctl(fd, req, arg uintptr) error {
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, req, arg); errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func ioctlPtr(fd, req uintptr, arg unsafe.Pointer) error {
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(arg)); errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 func open(filename string, c *config) (Port, error) {
@@ -58,22 +109,17 @@ func open(filename string, c *config) (Port, error) {
 		return nil, err
 	}
 
-	var sysErr error
-	err = rawConn.Control(func(fd uintptr) {
-		sysErr = setTermio(fd, c)
-		if sysErr != nil {
-			return
+	p := &port{file: f, rawConn: rawConn, timeout: c.Timeout}
+	err = p.control(func(fd uintptr) error {
+		if err := setTermio(fd, c); err != nil {
+			return err
 		}
-		sysErr = drain(fd)
+		return flushInput(fd)
 	})
 	if err != nil {
 		f.Close()
 		return nil, err
 	}
-	if sysErr != nil {
-		f.Close()
-		return nil, sysErr
-	}
 
-	return &port{File: f, rawConn: rawConn}, nil
+	return p, nil
 }
