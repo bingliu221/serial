@@ -30,7 +30,6 @@ type Config struct {
 	Baudrate int
 	Parity   Parity
 	StopBits float64
-	Timeout  time.Duration
 }
 
 func (cfg Config) config() (*config, error) {
@@ -59,7 +58,6 @@ func (cfg Config) config() (*config, error) {
 		FlagBaudrate: baudrate,
 		FlagParity:   parity,
 		FlagStopBits: stopbits,
-		Timeout:      cfg.Timeout,
 	}, nil
 }
 
@@ -68,7 +66,6 @@ type config struct {
 	FlagBaudrate uint32
 	FlagParity   uint32
 	FlagStopBits uint32
-	Timeout      time.Duration
 }
 
 func Open(path string, cfg Config) (Port, error) {

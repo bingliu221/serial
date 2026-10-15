@@ -4,7 +4,6 @@ package uart
 
 import (
 	"os"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -31,10 +30,10 @@ var parityOptions = map[Parity]uint32{
 type port struct {
 	file    *os.File
 	rawConn syscall.RawConn
-	timeout time.Duration
+}
 
-	deadlineMu  sync.Mutex
-	hasDeadline bool
+func (p *port) Read(b []byte) (int, error) {
+	return p.file.Read(b)
 }
 
 func (p *port) Write(b []byte) (int, error) {
@@ -46,25 +45,7 @@ func (p *port) Close() error {
 }
 
 func (p *port) SetReadDeadline(t time.Time) error {
-	p.deadlineMu.Lock()
-	defer p.deadlineMu.Unlock()
-	p.hasDeadline = !t.IsZero()
 	return p.file.SetReadDeadline(t)
-}
-
-func (p *port) Read(b []byte) (int, error) {
-	if p.timeout > 0 {
-		p.deadlineMu.Lock()
-		var err error
-		if !p.hasDeadline {
-			err = p.file.SetReadDeadline(time.Now().Add(p.timeout))
-		}
-		p.deadlineMu.Unlock()
-		if err != nil {
-			return 0, err
-		}
-	}
-	return p.file.Read(b)
 }
 
 func (p *port) FlushInput() error {
@@ -109,7 +90,7 @@ func open(filename string, c *config) (Port, error) {
 		return nil, err
 	}
 
-	p := &port{file: f, rawConn: rawConn, timeout: c.Timeout}
+	p := &port{file: f, rawConn: rawConn}
 	err = p.control(func(fd uintptr) error {
 		if err := setTermio(fd, c); err != nil {
 			return err
