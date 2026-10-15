@@ -22,14 +22,16 @@ const (
 )
 
 const (
-	ExceptionCodeIllegalFunction              byte = 1
-	ExceptionCodeIllegalDataAddress           byte = 2
-	ExceptionCodeIllegalDataValue             byte = 3
-	ExceptionCodeServerFailure                byte = 4
-	ExceptionCodeUnknownAddress               byte = 5
-	ExceptionCodeSlaveDeviceBusy              byte = 6
-	ExceptionCodeMemoryParityError            byte = 7
-	ExceptionCodeExceptionResponseLengthError byte = 8
+	ExceptionCodeIllegalFunction                    byte = 1
+	ExceptionCodeIllegalDataAddress                 byte = 2
+	ExceptionCodeIllegalDataValue                   byte = 3
+	ExceptionCodeServerDeviceFailure                byte = 4
+	ExceptionCodeAcknowledge                        byte = 5
+	ExceptionCodeServerDeviceBusy                   byte = 6
+	ExceptionCodeNegativeAcknowledge                byte = 7
+	ExceptionCodeMemoryParityError                  byte = 8
+	ExceptionCodeGatewayPathUnavailable             byte = 10
+	ExceptionCodeGatewayTargetDeviceFailedToRespond byte = 11
 )
 
 var (
@@ -46,16 +48,20 @@ func (e ExceptionError) Error() string {
 		return "illegal data address"
 	case ExceptionCodeIllegalDataValue:
 		return "illegal data value"
-	case ExceptionCodeServerFailure:
-		return "server failure"
-	case ExceptionCodeUnknownAddress:
-		return "unknown address"
-	case ExceptionCodeSlaveDeviceBusy:
-		return "slave device busy"
+	case ExceptionCodeServerDeviceFailure:
+		return "server device failure"
+	case ExceptionCodeAcknowledge:
+		return "acknowledge"
+	case ExceptionCodeServerDeviceBusy:
+		return "server device busy"
+	case ExceptionCodeNegativeAcknowledge:
+		return "negative acknowledge"
 	case ExceptionCodeMemoryParityError:
 		return "memory parity error"
-	case ExceptionCodeExceptionResponseLengthError:
-		return "exception response length error"
+	case ExceptionCodeGatewayPathUnavailable:
+		return "gateway path unavailable"
+	case ExceptionCodeGatewayTargetDeviceFailedToRespond:
+		return "gateway target device failed to respond"
 	default:
 		return fmt.Sprintf("unknown exception code %d", e)
 	}

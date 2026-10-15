@@ -39,18 +39,15 @@ func (h *ModbusRtuClientHandler) Close() error {
 	return h.port.Close()
 }
 
-func (h *ModbusRtuClientHandler) readResp() (*message, error) {
+func (h *ModbusRtuClientHandler) readFrame() (*message, error) {
 	var buf [260]byte
-	_, err := io.ReadFull(h.port, buf[:3])
-	if err != nil {
+	if _, err := io.ReadFull(h.port, buf[:3]); err != nil {
 		return nil, err
 	}
 
 	code := buf[1]
-	failed := code&0x80 == 0x80
-
 	remain := 2
-	if !failed {
+	if code&0x80 == 0 {
 		switch code {
 		case FnReadDiscreteInputs, FnReadCoils, FnReadInputRegisters, FnReadHoldingRegisters, FnReadWriteRegisters:
 			remain += int(buf[2])
@@ -62,15 +59,12 @@ func (h *ModbusRtuClientHandler) readResp() (*message, error) {
 	}
 
 	total := 3 + remain
-	_, err = io.ReadFull(h.port, buf[3:total])
-	if err != nil {
+	if _, err := io.ReadFull(h.port, buf[3:total]); err != nil {
 		return nil, err
 	}
 
 	adu := buf[:total]
-
-	err = h.valify(adu)
-	if err != nil {
+	if err := h.verifyCRC(adu); err != nil {
 		return nil, err
 	}
 
@@ -81,7 +75,30 @@ func (h *ModbusRtuClientHandler) readResp() (*message, error) {
 	}, nil
 }
 
-func (h *ModbusRtuClientHandler) frameEncode(msg *message) ([]byte, error) {
+func (h *ModbusRtuClientHandler) readWithContext(ctx context.Context) (*message, error) {
+	deadline, _ := ctx.Deadline()
+	if err := h.port.SetReadDeadline(deadline); err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = h.port.SetReadDeadline(time.Now())
+	})
+	defer func() {
+		stop()
+		_ = h.port.SetReadDeadline(time.Time{})
+	}()
+
+	resp, err := h.readFrame()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (h *ModbusRtuClientHandler) encodeFrame(msg *message) ([]byte, error) {
 	data := msg.data
 	if len(data) > 252 {
 		return nil, errors.New("pdu length too large")
@@ -96,19 +113,41 @@ func (h *ModbusRtuClientHandler) frameEncode(msg *message) ([]byte, error) {
 	return adu, nil
 }
 
-func (h *ModbusRtuClientHandler) valify(adu []byte) error {
+func (h *ModbusRtuClientHandler) verifyCRC(adu []byte) error {
 	if len(adu) < 4 {
 		return errors.New("invalid adu size")
 	}
 
 	crcIdx := len(adu) - 2
-
 	low, high := crc(adu[:crcIdx])
 	if adu[crcIdx] != low || adu[crcIdx+1] != high {
 		return errors.New("crc not matched")
 	}
 
 	return nil
+}
+
+func parseResponse(req, resp *message) ([]byte, error) {
+	if resp.slaveId != req.slaveId || resp.code&0x7F != req.code {
+		return nil, errors.New("mismatched response")
+	}
+
+	if resp.code&0x80 != 0 {
+		if len(resp.data) == 0 {
+			return nil, errors.New("invalid exception response")
+		}
+		return nil, ExceptionError(resp.data[0])
+	}
+
+	switch resp.code {
+	case FnReadDiscreteInputs, FnReadCoils, FnReadInputRegisters, FnReadHoldingRegisters, FnReadWriteRegisters:
+		if len(resp.data) < 1 {
+			return nil, errors.New("invalid response data")
+		}
+		return resp.data[1:], nil
+	default:
+		return nil, nil
+	}
 }
 
 func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte, error) {
@@ -119,7 +158,7 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 		return nil, err
 	}
 
-	adu, err := h.frameEncode(req)
+	adu, err := h.encodeFrame(req)
 	if err != nil {
 		return nil, err
 	}
@@ -128,13 +167,11 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 		return nil, err
 	}
 
-	_, err = h.port.Write(adu)
-	if err != nil {
+	if _, err = h.port.Write(adu); err != nil {
 		return nil, err
 	}
 
 	if req.slaveId == 0 {
-		// broadcast, no response
 		if h.broadcastDelay > 0 {
 			select {
 			case <-ctx.Done():
@@ -145,48 +182,10 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 		return nil, nil
 	}
 
-	deadline, _ := ctx.Deadline()
-	if err = h.port.SetReadDeadline(deadline); err != nil {
-		return nil, err
-	}
-	stop := context.AfterFunc(ctx, func() {
-		_ = h.port.SetReadDeadline(time.Now())
-	})
-	defer func() {
-		stop()
-		_ = h.port.SetReadDeadline(time.Time{})
-	}()
-
-	resp, err := h.readResp()
+	resp, err := h.readWithContext(ctx)
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
 		return nil, err
 	}
 
-	if resp.slaveId != req.slaveId || resp.code&0x7F != req.code {
-		return nil, errors.New("mismatched response")
-	}
-
-	failed := resp.code&0x80 == 0x80
-	if failed {
-		if len(resp.data) == 0 {
-			return nil, errors.New("invalid exception response")
-		}
-		exception := resp.data[0]
-		return nil, ExceptionError(exception)
-	}
-
-	switch resp.code {
-	case FnReadDiscreteInputs, FnReadCoils, FnReadInputRegisters, FnReadHoldingRegisters, FnReadWriteRegisters:
-		if len(resp.data) < 1 {
-			return nil, errors.New("invalid response data")
-		}
-		return resp.data[1:], nil
-	case FnWriteCoil, FnWriteCoils, FnWriteRegister, FnWriteRegisters, FnMaskWriteRegister:
-		return nil, nil
-	}
-
-	return nil, nil
+	return parseResponse(req, resp)
 }
