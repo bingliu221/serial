@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"io/fs"
 	"sync"
 	"time"
 
@@ -14,14 +13,8 @@ import (
 
 type ModbusRtuClientHandler struct {
 	port           uart.Port
-	readCtx        context.Context
 	broadcastDelay time.Duration
-
-	sendMutex sync.Mutex
-
-	expectResp      bool
-	expectRespMutex sync.Mutex
-	respC           chan *timedMessage
+	sendMutex      sync.Mutex
 }
 
 func NewModbusRtuClientHandler(path string, cfg uart.Config, opts ...Option) (*ModbusRtuClientHandler, error) {
@@ -37,26 +30,17 @@ func NewModbusRtuClientHandler(path string, cfg uart.Config, opts ...Option) (*M
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	h := &ModbusRtuClientHandler{
+	return &ModbusRtuClientHandler{
 		port:           port,
-		readCtx:        ctx,
 		broadcastDelay: o.broadcastDelay,
-		respC:          make(chan *timedMessage, 1),
-	}
-
-	go h.readContinuously(cancel)
-
-	return h, nil
+	}, nil
 }
 
 func (h *ModbusRtuClientHandler) Close() error {
-	h.port.Close()
-	<-h.readCtx.Done()
-	return nil
+	return h.port.Close()
 }
 
-func (h *ModbusRtuClientHandler) readResp() (*timedMessage, error) {
+func (h *ModbusRtuClientHandler) readResp() (*message, error) {
 	head := make([]byte, 3)
 	_, err := io.ReadFull(h.port, head)
 	if err != nil {
@@ -93,41 +77,11 @@ func (h *ModbusRtuClientHandler) readResp() (*timedMessage, error) {
 		return nil, err
 	}
 
-	return &timedMessage{
-		message{
-			slaveId: adu[0],
-			code:    adu[1],
-			data:    adu[2 : len(adu)-2],
-		},
-		time.Now(),
+	return &message{
+		slaveId: adu[0],
+		code:    adu[1],
+		data:    adu[2 : len(adu)-2],
 	}, nil
-}
-
-func (h *ModbusRtuClientHandler) readContinuously(cancel context.CancelFunc) {
-	defer func() {
-		close(h.respC)
-		cancel()
-	}()
-
-	for {
-		resp, err := h.readResp()
-		if err != nil {
-			if errors.Is(err, fs.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				break
-			}
-			continue
-		}
-
-		h.expectRespMutex.Lock()
-		if h.expectResp {
-			select {
-			case <-h.respC:
-			default:
-			}
-			h.respC <- resp
-		}
-		h.expectRespMutex.Unlock()
-	}
 }
 
 func (h *ModbusRtuClientHandler) frameEncode(msg *message) ([]byte, error) {
@@ -165,17 +119,26 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 	h.sendMutex.Lock()
 	defer h.sendMutex.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	adu, err := h.frameEncode(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = h.port.Drain(); err != nil {
+		return nil, err
+	}
+
+	_, err = h.port.Write(adu)
 	if err != nil {
 		return nil, err
 	}
 
 	if req.slaveId == 0 {
 		// broadcast, no response
-		_, err = h.port.Write(adu)
-		if err != nil {
-			return nil, err
-		}
 		if h.broadcastDelay > 0 {
 			select {
 			case <-ctx.Done():
@@ -186,46 +149,24 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 		return nil, nil
 	}
 
-	h.expectRespMutex.Lock()
-	select {
-	case <-h.respC:
-	default:
-	}
-	h.expectResp = true
-	h.expectRespMutex.Unlock()
-
-	defer func() {
-		h.expectRespMutex.Lock()
-		h.expectResp = false
-		select {
-		case <-h.respC:
-		default:
-		}
-		h.expectRespMutex.Unlock()
-	}()
-
-	sentTime := time.Now()
-
-	_, err = h.port.Write(adu)
-	if err != nil {
+	deadline, _ := ctx.Deadline()
+	if err = h.port.SetReadDeadline(deadline); err != nil {
 		return nil, err
 	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = h.port.SetReadDeadline(time.Now())
+	})
+	defer func() {
+		stop()
+		_ = h.port.SetReadDeadline(time.Time{})
+	}()
 
-	var resp *timedMessage
-
-LOOP:
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case resp = <-h.respC:
-			if resp == nil {
-				return nil, errors.New("port closed")
-			}
-			if resp.timestamp.After(sentTime) {
-				break LOOP
-			}
+	resp, err := h.readResp()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
 		}
+		return nil, err
 	}
 
 	if resp.slaveId != req.slaveId || resp.code&0x7F != req.code {

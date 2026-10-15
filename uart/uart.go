@@ -10,6 +10,8 @@ type Port interface {
 	io.Reader
 	io.Writer
 	io.Closer
+	Drain() error
+	SetReadDeadline(t time.Time) error
 }
 
 type Parity string

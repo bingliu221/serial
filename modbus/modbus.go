@@ -67,11 +67,6 @@ type message struct {
 	data    []byte
 }
 
-type timedMessage struct {
-	message
-	timestamp time.Time
-}
-
 type Handler interface {
 	Send(ctx context.Context, msg *message) ([]byte, error)
 	Close() error

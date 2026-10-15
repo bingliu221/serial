@@ -30,6 +30,22 @@ func deciSecondInUint8(duration time.Duration) uint8 {
 	return uint8(min(max(duration.Milliseconds()/100, 1), 255))
 }
 
+type port struct {
+	*os.File
+	rawConn syscall.RawConn
+}
+
+func (p *port) Drain() error {
+	var sysErr error
+	err := p.rawConn.Control(func(fd uintptr) {
+		sysErr = drain(fd)
+	})
+	if err != nil {
+		return err
+	}
+	return sysErr
+}
+
 func open(filename string, c *config) (Port, error) {
 	f, err := os.OpenFile(filename, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0666)
 	if err != nil {
@@ -59,5 +75,5 @@ func open(filename string, c *config) (Port, error) {
 		return nil, sysErr
 	}
 
-	return f, nil
+	return &port{File: f, rawConn: rawConn}, nil
 }
