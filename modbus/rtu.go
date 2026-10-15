@@ -13,8 +13,9 @@ import (
 )
 
 type ModbusRtuClientHandler struct {
-	port    uart.Port
-	readCtx context.Context
+	port           uart.Port
+	readCtx        context.Context
+	broadcastDelay time.Duration
 
 	sendMutex sync.Mutex
 
@@ -23,7 +24,14 @@ type ModbusRtuClientHandler struct {
 	respC           chan *timedMessage
 }
 
-func NewModbusRtuClientHandler(path string, cfg uart.Config) (*ModbusRtuClientHandler, error) {
+func NewModbusRtuClientHandler(path string, cfg uart.Config, opts ...Option) (*ModbusRtuClientHandler, error) {
+	o := options{
+		broadcastDelay: 100 * time.Millisecond,
+	}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	port, err := uart.Open(path, cfg)
 	if err != nil {
 		return nil, err
@@ -31,9 +39,10 @@ func NewModbusRtuClientHandler(path string, cfg uart.Config) (*ModbusRtuClientHa
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &ModbusRtuClientHandler{
-		port:    port,
-		readCtx: ctx,
-		respC:   make(chan *timedMessage, 1),
+		port:           port,
+		readCtx:        ctx,
+		broadcastDelay: o.broadcastDelay,
+		respC:          make(chan *timedMessage, 1),
 	}
 
 	go h.readContinuously(cancel)
@@ -65,6 +74,8 @@ func (h *ModbusRtuClientHandler) readResp() (*timedMessage, error) {
 			remain += count
 		case FnWriteCoil, FnWriteCoils, FnWriteRegister, FnWriteRegisters:
 			remain += 3
+		case FnMaskWriteRegister:
+			remain += 5
 		}
 	}
 
@@ -93,7 +104,10 @@ func (h *ModbusRtuClientHandler) readResp() (*timedMessage, error) {
 }
 
 func (h *ModbusRtuClientHandler) readContinuously(cancel context.CancelFunc) {
-	defer cancel()
+	defer func() {
+		close(h.respC)
+		cancel()
+	}()
 
 	for {
 		resp, err := h.readResp()
@@ -106,8 +120,11 @@ func (h *ModbusRtuClientHandler) readContinuously(cancel context.CancelFunc) {
 
 		h.expectRespMutex.Lock()
 		if h.expectResp {
+			select {
+			case <-h.respC:
+			default:
+			}
 			h.respC <- resp
-			h.expectResp = false
 		}
 		h.expectRespMutex.Unlock()
 	}
@@ -153,21 +170,46 @@ func (h *ModbusRtuClientHandler) Send(ctx context.Context, req *message) ([]byte
 		return nil, err
 	}
 
+	if req.slaveId == 0 {
+		// broadcast, no response
+		_, err = h.port.Write(adu)
+		if err != nil {
+			return nil, err
+		}
+		if h.broadcastDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(h.broadcastDelay):
+			}
+		}
+		return nil, nil
+	}
+
+	h.expectRespMutex.Lock()
+	select {
+	case <-h.respC:
+	default:
+	}
+	h.expectResp = true
+	h.expectRespMutex.Unlock()
+
+	defer func() {
+		h.expectRespMutex.Lock()
+		h.expectResp = false
+		select {
+		case <-h.respC:
+		default:
+		}
+		h.expectRespMutex.Unlock()
+	}()
+
 	sentTime := time.Now()
 
 	_, err = h.port.Write(adu)
 	if err != nil {
 		return nil, err
 	}
-
-	if req.slaveId == 0 {
-		// broadcast, no response
-		return nil, nil
-	}
-
-	h.expectRespMutex.Lock()
-	h.expectResp = true
-	h.expectRespMutex.Unlock()
 
 	var resp *timedMessage
 
@@ -192,14 +234,20 @@ LOOP:
 
 	failed := resp.code&0x80 == 0x80
 	if failed {
+		if len(resp.data) == 0 {
+			return nil, errors.New("invalid exception response")
+		}
 		exception := resp.data[0]
 		return nil, ExceptionError(exception)
 	}
 
 	switch resp.code {
 	case FnReadDiscreteInputs, FnReadCoils, FnReadInputRegisters, FnReadHoldingRegisters, FnReadWriteRegisters:
+		if len(resp.data) < 1 {
+			return nil, errors.New("invalid response data")
+		}
 		return resp.data[1:], nil
-	case FnWriteCoil, FnWriteCoils, FnWriteRegister, FnWriteRegisters:
+	case FnWriteCoil, FnWriteCoils, FnWriteRegister, FnWriteRegisters, FnMaskWriteRegister:
 		return nil, nil
 	}
 

@@ -80,3 +80,15 @@ type Handler interface {
 type ModbusClient struct {
 	handler Handler
 }
+
+type options struct {
+	broadcastDelay time.Duration
+}
+
+type Option func(*options)
+
+func WithBroadcastDelay(d time.Duration) Option {
+	return func(o *options) {
+		o.broadcastDelay = d
+	}
+}
