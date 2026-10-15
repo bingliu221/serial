@@ -1,7 +1,6 @@
 package modbus
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -41,21 +40,20 @@ func (h *ModbusRtuClientHandler) Close() error {
 }
 
 func (h *ModbusRtuClientHandler) readResp() (*message, error) {
-	head := make([]byte, 3)
-	_, err := io.ReadFull(h.port, head)
+	var buf [260]byte
+	_, err := io.ReadFull(h.port, buf[:3])
 	if err != nil {
 		return nil, err
 	}
 
-	code := head[1]
+	code := buf[1]
 	failed := code&0x80 == 0x80
 
 	remain := 2
 	if !failed {
 		switch code {
 		case FnReadDiscreteInputs, FnReadCoils, FnReadInputRegisters, FnReadHoldingRegisters, FnReadWriteRegisters:
-			count := int(head[2])
-			remain += count
+			remain += int(buf[2])
 		case FnWriteCoil, FnWriteCoils, FnWriteRegister, FnWriteRegisters:
 			remain += 3
 		case FnMaskWriteRegister:
@@ -63,14 +61,13 @@ func (h *ModbusRtuClientHandler) readResp() (*message, error) {
 		}
 	}
 
-	tail := make([]byte, remain)
-
-	_, err = io.ReadFull(h.port, tail)
+	total := 3 + remain
+	_, err = io.ReadFull(h.port, buf[3:total])
 	if err != nil {
 		return nil, err
 	}
 
-	adu := bytes.Join([][]byte{head, tail}, nil)
+	adu := buf[:total]
 
 	err = h.valify(adu)
 	if err != nil {
@@ -80,7 +77,7 @@ func (h *ModbusRtuClientHandler) readResp() (*message, error) {
 	return &message{
 		slaveId: adu[0],
 		code:    adu[1],
-		data:    adu[2 : len(adu)-2],
+		data:    adu[2 : total-2],
 	}, nil
 }
 
@@ -94,8 +91,7 @@ func (h *ModbusRtuClientHandler) frameEncode(msg *message) ([]byte, error) {
 	adu[0] = msg.slaveId
 	adu[1] = msg.code
 	copy(adu[2:], data)
-	sum := crc(adu[:2+len(data)])
-	copy(adu[2+len(data):], sum)
+	adu[2+len(data)], adu[3+len(data)] = crc(adu[:2+len(data)])
 
 	return adu, nil
 }
@@ -107,8 +103,8 @@ func (h *ModbusRtuClientHandler) valify(adu []byte) error {
 
 	crcIdx := len(adu) - 2
 
-	sum := crc(adu[:crcIdx])
-	if !bytes.Equal(sum, adu[crcIdx:]) {
+	low, high := crc(adu[:crcIdx])
+	if adu[crcIdx] != low || adu[crcIdx+1] != high {
 		return errors.New("crc not matched")
 	}
 

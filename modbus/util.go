@@ -1,25 +1,22 @@
 package modbus
 
 import (
-	"bytes"
 	"encoding/binary"
 )
 
-func boolbe(v bool) []byte {
+func boolu16(v bool) uint16 {
 	if v {
-		return []byte{0xFF, 0x00}
+		return 0xFF00
 	}
-	return []byte{0x00, 0x00}
+	return 0x0000
 }
 
-func boollistbe(values []bool) []byte {
-	b := make([]byte, (len(values)+7)/8)
+func putBoolList(dst []byte, values []bool) {
 	for i, v := range values {
 		if v {
-			b[i/8] |= 1 << (i % 8)
+			dst[i/8] |= 1 << (i % 8)
 		}
 	}
-	return b
 }
 
 func beboollist(b []byte) []bool {
@@ -31,22 +28,17 @@ func beboollist(b []byte) []bool {
 	return values
 }
 
-func u16be(v uint16) []byte {
-	b := make([]byte, 2)
-	binary.BigEndian.PutUint16(b, v)
-	return b
+func u16bePair(a, b uint16) []byte {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint16(buf[0:2], a)
+	binary.BigEndian.PutUint16(buf[2:4], b)
+	return buf
 }
 
-func u16listbe(values []uint16) []byte {
-	b := make([]byte, 0, len(values)*2)
-	for _, v := range values {
-		b = binary.BigEndian.AppendUint16(b, v)
+func putU16ListBE(dst []byte, values []uint16) {
+	for i, v := range values {
+		binary.BigEndian.PutUint16(dst[i*2:], v)
 	}
-	return b
-}
-
-func bytesJoin(b ...[]byte) []byte {
-	return bytes.Join(b, nil)
 }
 
 func beu16list(b []byte) []uint16 {

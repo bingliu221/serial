@@ -2,6 +2,7 @@ package modbus
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/bingliu221/serial/uart"
@@ -41,7 +42,7 @@ func (c *ModbusClient) request(ctx context.Context, slaveId byte, code byte, dat
 }
 
 func (c *ModbusClient) ReadCoils(ctx context.Context, slaveId byte, address uint16, count uint16) ([]bool, error) {
-	data := bytesJoin(u16be(address), u16be(count))
+	data := u16bePair(address, count)
 	data, err := c.request(ctx, slaveId, FnReadCoils, data)
 	if err != nil {
 		return nil, err
@@ -54,20 +55,24 @@ func (c *ModbusClient) ReadCoils(ctx context.Context, slaveId byte, address uint
 }
 
 func (c *ModbusClient) WriteCoil(ctx context.Context, slaveId byte, address uint16, value bool) error {
-	data := bytesJoin(u16be(address), boolbe(value))
+	data := u16bePair(address, boolu16(value))
 	_, err := c.request(ctx, slaveId, FnWriteCoil, data)
 	return err
 }
 
 func (c *ModbusClient) WriteCoils(ctx context.Context, slaveId byte, address uint16, values []bool) error {
-	raw := boollistbe(values)
-	data := bytesJoin(u16be(address), u16be(uint16(len(values))), []byte{byte(len(raw))}, raw)
+	byteCount := (len(values) + 7) / 8
+	data := make([]byte, 5+byteCount)
+	binary.BigEndian.PutUint16(data[0:2], address)
+	binary.BigEndian.PutUint16(data[2:4], uint16(len(values)))
+	data[4] = byte(byteCount)
+	putBoolList(data[5:], values)
 	_, err := c.request(ctx, slaveId, FnWriteCoils, data)
 	return err
 }
 
 func (c *ModbusClient) ReadDiscreteInputs(ctx context.Context, slaveId byte, address uint16, count uint16) ([]bool, error) {
-	data := bytesJoin(u16be(address), u16be(count))
+	data := u16bePair(address, count)
 	data, err := c.request(ctx, slaveId, FnReadDiscreteInputs, data)
 	if err != nil {
 		return nil, err
@@ -80,7 +85,7 @@ func (c *ModbusClient) ReadDiscreteInputs(ctx context.Context, slaveId byte, add
 }
 
 func (c *ModbusClient) ReadHoldingRegisters(ctx context.Context, slaveId byte, address uint16, count uint16) ([]uint16, error) {
-	data := bytesJoin(u16be(address), u16be(count))
+	data := u16bePair(address, count)
 	data, err := c.request(ctx, slaveId, FnReadHoldingRegisters, data)
 	if err != nil {
 		return nil, err
@@ -92,7 +97,7 @@ func (c *ModbusClient) ReadHoldingRegisters(ctx context.Context, slaveId byte, a
 }
 
 func (c *ModbusClient) ReadInputRegisters(ctx context.Context, slaveId byte, address uint16, count uint16) ([]uint16, error) {
-	data := bytesJoin(u16be(address), u16be(count))
+	data := u16bePair(address, count)
 	data, err := c.request(ctx, slaveId, FnReadInputRegisters, data)
 	if err != nil {
 		return nil, err
@@ -104,8 +109,14 @@ func (c *ModbusClient) ReadInputRegisters(ctx context.Context, slaveId byte, add
 }
 
 func (c *ModbusClient) ReadWriteRegisters(ctx context.Context, slaveId byte, readAddress uint16, readCount uint16, writeAddress uint16, writeValues []uint16) ([]uint16, error) {
-	raw := u16listbe(writeValues)
-	data := bytesJoin(u16be(readAddress), u16be(readCount), u16be(writeAddress), u16be(uint16(len(writeValues))), []byte{byte(len(raw))}, raw)
+	byteCount := len(writeValues) * 2
+	data := make([]byte, 9+byteCount)
+	binary.BigEndian.PutUint16(data[0:2], readAddress)
+	binary.BigEndian.PutUint16(data[2:4], readCount)
+	binary.BigEndian.PutUint16(data[4:6], writeAddress)
+	binary.BigEndian.PutUint16(data[6:8], uint16(len(writeValues)))
+	data[8] = byte(byteCount)
+	putU16ListBE(data[9:], writeValues)
 	data, err := c.request(ctx, slaveId, FnReadWriteRegisters, data)
 	if err != nil {
 		return nil, err
@@ -117,14 +128,18 @@ func (c *ModbusClient) ReadWriteRegisters(ctx context.Context, slaveId byte, rea
 }
 
 func (c *ModbusClient) WriteRegister(ctx context.Context, slaveId byte, address uint16, value uint16) error {
-	data := bytesJoin(u16be(address), u16be(value))
+	data := u16bePair(address, value)
 	_, err := c.request(ctx, slaveId, FnWriteRegister, data)
 	return err
 }
 
 func (c *ModbusClient) WriteRegisters(ctx context.Context, slaveId byte, address uint16, values []uint16) error {
-	raw := u16listbe(values)
-	data := bytesJoin(u16be(address), u16be(uint16(len(values))), []byte{byte(len(raw))}, raw)
+	byteCount := len(values) * 2
+	data := make([]byte, 5+byteCount)
+	binary.BigEndian.PutUint16(data[0:2], address)
+	binary.BigEndian.PutUint16(data[2:4], uint16(len(values)))
+	data[4] = byte(byteCount)
+	putU16ListBE(data[5:], values)
 	_, err := c.request(ctx, slaveId, FnWriteRegisters, data)
 	return err
 }
